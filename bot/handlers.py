@@ -499,7 +499,7 @@ def register(application) -> None:
                 chat_id = update.callback_query.message.chat_id
 
         if chat_id is None:
-            chat_id = cfg.ALLOWED_CHAT_ID  # fall back to the configured chat
+            chat_id = cfg.TELEGRAM_CHAT_ID  # fall back to the configured chat
 
         text = format_error("Unexpected error", exc)
         try:

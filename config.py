@@ -33,6 +33,12 @@ TRADE_AMOUNT_USDC: float = float(os.getenv("TRADE_AMOUNT_USDC", "1.0"))
 DB_PATH: str = os.getenv("DB_PATH", "autopoly.db")
 
 # ---------------------------------------------------------------------------
+# Demo / Sizing defaults
+# ---------------------------------------------------------------------------
+DEFAULT_DEMO_BANKROLL: float = 100.0
+DEFAULT_SIZING_MODE: str = "fixed"
+
+# ---------------------------------------------------------------------------
 # Strategy
 # ---------------------------------------------------------------------------
 SIGNAL_THRESHOLD: float = 0.53

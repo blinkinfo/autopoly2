@@ -15,15 +15,20 @@ def format_signal(
     slot_start_str: str,
     slot_end_str: str,
     autotrade: bool,
+    sizing_mode: str = "fixed",
+    trade_amount: float | None = None,
 ) -> str:
     side_emoji = "\U0001f4c8" if side == "Up" else "\U0001f4c9"
     at_line = "\U0001f916 AutoTrade: ON \u2192 Order Placed" if autotrade else "\U0001f916 AutoTrade: OFF"
+    sizing_label = "Fixed" if sizing_mode == "fixed" else "Half-Kelly"
+    amount_str = f"${trade_amount:.2f}" if trade_amount is not None else "N/A"
     return (
         "\U0001f4e1 <b>Signal Fired!</b>\n"
         "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
         f"\u2502 \u23f0 Slot: {slot_start_str}-{slot_end_str} UTC\n"
         f"\u2502 {side_emoji} Side: {side}\n"
         f"\u2502 \U0001f4b2 Ask Price: ${entry_price:.2f}\n"
+        f"\u2502 \U0001f4cf Sizing: {sizing_label} ({amount_str})\n"
         f"\u2502 {at_line}\n"
         "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
     )
@@ -52,14 +57,17 @@ def format_resolution(
     slot_start_str: str,
     slot_end_str: str,
     pnl: float | None = None,
+    is_demo: bool = False,
+    demo_balance: float | None = None,
 ) -> str:
     result_price = 1.00 if is_win else 0.00
     icon = "\u2705" if is_win else "\u274c"
     label = "WIN" if is_win else "LOSS"
     side_emoji = "\U0001f4c8" if side == "Up" else "\U0001f4c9"
+    demo_prefix = "[DEMO] " if is_demo else ""
 
     lines = [
-        f"{icon} <b>Signal Result \u2014 {label}</b>",
+        f"{icon} <b>{demo_prefix}Signal Result \u2014 {label}</b>",
         "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
         f"\u2502 \u23f0 Slot: {slot_start_str}-{slot_end_str} UTC",
         f"\u2502 {side_emoji} Side: {side}",
@@ -68,6 +76,8 @@ def format_resolution(
     if pnl is not None:
         sign = "+" if pnl >= 0 else ""
         lines.append(f"\u2502 \U0001f4b0 P&L: {sign}${pnl:.2f}")
+    if is_demo and demo_balance is not None:
+        lines.append(f"\u2502 \U0001f4dd Demo Balance: ${demo_balance:.2f}")
     lines.append("\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
     return "\n".join(lines)
 
@@ -98,17 +108,18 @@ def format_signal_stats(stats: dict[str, Any], label: str = "All Time") -> str:
     return "\n".join(lines)
 
 
-def format_trade_stats(stats: dict[str, Any], label: str = "All Time") -> str:
+def format_trade_stats(stats: dict[str, Any], label: str = "All Time", demo: bool = False) -> str:
     streak_str = "0"
     if stats.get("current_streak") and stats.get("current_streak_type"):
         streak_str = f"{stats['current_streak']}{stats['current_streak_type']}"
 
     sign = "+" if stats["net_pnl"] >= 0 else ""
     roi_sign = "+" if stats["roi_pct"] >= 0 else ""
+    mode_label = "Demo" if demo else "Real"
 
     SEP = "\u2501" * 20
     lines = [
-        f"\U0001f4b0 <b>Trade Performance ({label})</b>",
+        f"\U0001f4b0 <b>{mode_label} Trade Performance ({label})</b>",
         SEP,
         f"\U0001f4ca Total Trades: {stats['total_trades']}",
         f"\u2705 Wins: {stats['wins']}  |  \u274c Losses: {stats['losses']}",
@@ -133,12 +144,17 @@ def format_status(
     open_positions: int,
     uptime_str: str,
     last_signal: str | None,
+    demo_mode: bool = False,
+    sizing_mode: str = "fixed",
+    demo_balance: float | None = None,
 ) -> str:
     conn_icon = "\U0001f7e2" if connected else "\U0001f534"
     conn_text = "Connected" if connected else "Disconnected"
     at_text = "ON" if autotrade else "OFF"
     bal_text = f"{balance:.2f} USDC" if balance is not None else "N/A"
     sig_text = last_signal or "None"
+    mode_text = "Demo" if demo_mode else "Real"
+    sizing_label = "Fixed" if sizing_mode == "fixed" else "Half-Kelly"
 
     SEP = "\u2501" * 20
     lines = [
@@ -149,11 +165,37 @@ def format_status(
         f"\U0001f4b0 Balance: {bal_text}",
         SEP,
         f"\U0001f916 AutoTrade: {at_text}",
+        f"\U0001f3ae Mode: {mode_text}",
+        f"\U0001f4cf Sizing: {sizing_label}",
         f"\U0001f4b5 Trade Amount: ${trade_amount:.2f}",
         f"\U0001f4ca Open Positions: {open_positions}",
+    ]
+    if demo_mode and demo_balance is not None:
+        lines.append(f"\U0001f4dd Demo Balance: ${demo_balance:.2f}")
+    lines += [
         SEP,
         f"\u23f0 Uptime: {uptime_str}",
         f"\U0001f4e1 Last Signal: {sig_text}",
+    ]
+    return "\n".join(lines)
+
+
+def format_demo_status(
+    bankroll: float,
+    balance: float,
+    trade_count: int,
+) -> str:
+    session_pnl = balance - bankroll
+    sign = "+" if session_pnl >= 0 else ""
+    SEP = "\u2501" * 20
+    lines = [
+        "\U0001f4dd <b>Demo Dashboard</b>",
+        SEP,
+        f"\U0001f4b0 Session Bankroll: ${bankroll:.2f}",
+        f"\U0001f4b5 Current Balance: ${balance:.2f}",
+        f"\U0001f4c8 Session P&L: {sign}${session_pnl:.2f}",
+        f"\U0001f4ca Demo Trades: {trade_count}",
+        SEP,
     ]
     return "\n".join(lines)
 
@@ -181,11 +223,12 @@ def format_recent_trades(trades: list[dict[str, Any]]) -> str:
         ss = t["slot_start"].split(" ")[-1] if " " in t["slot_start"] else t["slot_start"]
         se = t["slot_end"].split(" ")[-1] if " " in t["slot_end"] else t["slot_end"]
         icon = "\u2705" if t.get("is_win") == 1 else ("\u274c" if t.get("is_win") == 0 else "\u23f3")
+        demo_tag = "[DEMO] " if t.get("is_demo") else ""
         pnl_str = ""
         if t.get("pnl") is not None:
             sign = "+" if t["pnl"] >= 0 else ""
             pnl_str = f"  {sign}${t['pnl']:.2f}"
-        lines.append(f"{icon} {ss}-{se} UTC  {t['side']}  ${t['amount_usdc']:.2f}{pnl_str}")
+        lines.append(f"{icon} {demo_tag}{ss}-{se} UTC  {t['side']}  ${t['amount_usdc']:.2f}{pnl_str}")
     return "\n".join(lines)
 
 
@@ -196,11 +239,17 @@ def format_help() -> str:
         "/status \u2014 Bot status & balance\n"
         "/signals \u2014 Signal performance stats\n"
         "/trades \u2014 Trade P&L dashboard\n"
+        "/demo \u2014 Demo trading dashboard\n"
         "/settings \u2014 Toggle autotrade, set amount\n"
         "/help \u2014 This help message\n\n"
+        "<b>Settings:</b>\n"
+        "\u2022 <b>Sizing Mode</b> \u2014 Fixed (constant amount) or Half-Kelly (dynamic based on win rate)\n"
+        "\u2022 <b>Demo Mode</b> \u2014 Paper trade with simulated balance (no real orders)\n"
+        "\u2022 <b>Demo Bankroll</b> \u2014 Starting balance for demo sessions; reset anytime\n\n"
         "<b>How it works:</b>\n"
         "Every 5 minutes the bot checks the NEXT slot's BTC up/down "
         "prices 85 seconds before the current slot ends. If either "
         "side \u2265 $0.53, a signal fires and trades that slot. "
-        "With AutoTrade ON, a FOK market order is placed automatically."
+        "With AutoTrade ON, a FOK market order is placed automatically "
+        "(or simulated in Demo mode)."
     )

@@ -46,6 +46,54 @@ async def get_trade_amount() -> float:
 
 
 # ---------------------------------------------------------------------------
+# Demo / Sizing setting helpers
+# ---------------------------------------------------------------------------
+
+async def is_demo_mode() -> bool:
+    val = await get_setting("demo_mode")
+    return val == "true"
+
+
+async def get_demo_balance() -> float:
+    val = await get_setting("demo_balance")
+    return float(val) if val else cfg.DEFAULT_DEMO_BANKROLL
+
+
+async def set_demo_balance(balance: float) -> None:
+    await set_setting("demo_balance", str(round(balance, 4)))
+
+
+async def get_demo_bankroll() -> float:
+    val = await get_setting("demo_bankroll")
+    return float(val) if val else cfg.DEFAULT_DEMO_BANKROLL
+
+
+async def get_sizing_mode() -> str:
+    val = await get_setting("sizing_mode")
+    return val if val else cfg.DEFAULT_SIZING_MODE
+
+
+async def get_win_rate_for_kelly() -> float:
+    """Return historical signal win rate (non-skipped, resolved signals).
+
+    Returns 0.0 if fewer than 10 resolved signals exist (not enough data).
+    """
+    async with aiosqlite.connect(_db()) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END) as wins "
+            "FROM signals WHERE skipped = 0 AND is_win IS NOT NULL"
+        )
+        row = await cursor.fetchone()
+        total = row["total"]
+        wins = row["wins"] or 0
+    if total < 10:
+        return 0.0
+    return wins / total
+
+
+# ---------------------------------------------------------------------------
 # Signal CRUD
 # ---------------------------------------------------------------------------
 
@@ -122,12 +170,15 @@ async def insert_trade(
     order_id: str | None = None,
     fill_price: float | None = None,
     status: str = "pending",
+    demo: bool = False,
 ) -> int:
     async with aiosqlite.connect(_db()) as db:
         cursor = await db.execute(
             "INSERT INTO trades (signal_id, slot_start, slot_end, side, entry_price, "
-            "amount_usdc, order_id, fill_price, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (signal_id, slot_start, slot_end, side, entry_price, amount_usdc, order_id, fill_price, status),
+            "amount_usdc, order_id, fill_price, status, is_demo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (signal_id, slot_start, slot_end, side, entry_price, amount_usdc,
+             order_id, fill_price, status, 1 if demo else 0),
         )
         await db.commit()
         return cursor.lastrowid  # type: ignore[return-value]
@@ -158,31 +209,35 @@ async def resolve_trade(trade_id: int, outcome: str, is_win: bool, pnl: float) -
         await db.commit()
 
 
-async def get_recent_trades(n: int = 10) -> list[dict[str, Any]]:
+async def get_recent_trades(n: int = 10, demo: bool = False) -> list[dict[str, Any]]:
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM trades ORDER BY id DESC LIMIT ?", (n,)
+            "SELECT * FROM trades WHERE is_demo = ? ORDER BY id DESC LIMIT ?",
+            (1 if demo else 0, n),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_unresolved_trades() -> list[dict[str, Any]]:
+async def get_unresolved_trades(demo: bool = False) -> list[dict[str, Any]]:
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM trades WHERE is_win IS NULL AND status IN ('pending', 'filled') ORDER BY id"
+            "SELECT * FROM trades WHERE is_win IS NULL AND status IN ('pending', 'filled') "
+            "AND is_demo = ? ORDER BY id",
+            (1 if demo else 0,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-async def get_trade_by_signal(signal_id: int) -> dict[str, Any] | None:
+async def get_trade_by_signal(signal_id: int, demo: bool = False) -> dict[str, Any] | None:
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM trades WHERE signal_id = ? LIMIT 1", (signal_id,)
+            "SELECT * FROM trades WHERE signal_id = ? AND is_demo = ? LIMIT 1",
+            (signal_id, 1 if demo else 0),
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -258,10 +313,7 @@ async def get_signal_stats(limit: int | None = None) -> dict[str, Any]:
         skip_count = row2["cnt"]
 
         # Resolved signals for stats
-        order_clause = "ORDER BY id ASC"
-        limit_clause = ""
         if limit:
-            # We need the LAST N resolved signals — subquery to get them in order
             inner = (
                 f"SELECT * FROM signals WHERE skipped = 0 AND is_win IS NOT NULL "
                 f"ORDER BY id DESC LIMIT {limit}"
@@ -294,26 +346,27 @@ async def get_signal_stats(limit: int | None = None) -> dict[str, Any]:
     }
 
 
-async def get_trade_stats(limit: int | None = None) -> dict[str, Any]:
+async def get_trade_stats(limit: int | None = None, demo: bool = False) -> dict[str, Any]:
+    demo_flag = 1 if demo else 0
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
 
         if limit:
             inner = (
-                f"SELECT * FROM trades WHERE is_win IS NOT NULL "
+                f"SELECT * FROM trades WHERE is_win IS NOT NULL AND is_demo = {demo_flag} "
                 f"ORDER BY id DESC LIMIT {limit}"
             )
             query = f"SELECT is_win, amount_usdc, pnl FROM ({inner}) ORDER BY id ASC"
         else:
             query = (
                 "SELECT is_win, amount_usdc, pnl FROM trades "
-                "WHERE is_win IS NOT NULL ORDER BY id ASC"
+                f"WHERE is_win IS NOT NULL AND is_demo = {demo_flag} ORDER BY id ASC"
             )
 
         cursor = await db.execute(query)
         rows = await cursor.fetchall()
 
-        total_q = "SELECT COUNT(*) as cnt FROM trades"
+        total_q = f"SELECT COUNT(*) as cnt FROM trades WHERE is_demo = {demo_flag}"
         total_row = await (await db.execute(total_q)).fetchone()
         total_trades = total_row["cnt"]
 

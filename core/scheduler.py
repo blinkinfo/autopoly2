@@ -73,58 +73,63 @@ async def _resolve_and_notify(signal_id: int, slug: str, side: str, entry_price:
                                slot_start: str, slot_end: str, trade_id: int | None,
                                amount_usdc: float | None, is_demo_trade: bool = False) -> None:
     """Poll for resolution, update DB, notify Telegram."""
-    from bot.formatters import format_resolution
+    try:
+        from bot.formatters import format_resolution
 
-    winner = await resolver.resolve_slot(slug)
-    if winner is None:
-        log.warning(
-            "Could not resolve slot %s after all attempts — adding to persistent retry queue",
-            slug,
-        )
-        await pending_queue.add_pending(
-            signal_id=signal_id,
-            slug=slug,
+        winner = await resolver.resolve_slot(slug)
+        if winner is None:
+            log.warning(
+                "Could not resolve slot %s after all attempts — adding to persistent retry queue",
+                slug,
+            )
+            await pending_queue.add_pending(
+                signal_id=signal_id,
+                slug=slug,
+                side=side,
+                entry_price=entry_price,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                trade_id=trade_id,
+                amount_usdc=amount_usdc,
+                is_demo=is_demo_trade,
+            )
+            return
+
+        is_win = winner == side
+        await queries.resolve_signal(signal_id, winner, is_win)
+
+        pnl: float | None = None
+        demo_balance_after: float | None = None
+        if trade_id is not None and amount_usdc is not None:
+            if is_win:
+                pnl = round(amount_usdc * (1.0 / entry_price - 1.0), 4)
+            else:
+                pnl = -amount_usdc
+            await queries.resolve_trade(trade_id, winner, is_win, pnl)
+
+            # Update demo balance if this was a demo trade
+            if is_demo_trade and pnl is not None:
+                demo_balance_after = await _update_demo_balance_after_pnl(pnl)
+
+        # Extract HH:MM from slot_start/slot_end full strings
+        s_start = slot_start.split(" ")[-1] if " " in slot_start else slot_start
+        s_end = slot_end.split(" ")[-1] if " " in slot_end else slot_end
+
+        msg = format_resolution(
+            is_win=is_win,
             side=side,
             entry_price=entry_price,
-            slot_start=slot_start,
-            slot_end=slot_end,
-            trade_id=trade_id,
-            amount_usdc=amount_usdc,
+            slot_start_str=s_start,
+            slot_end_str=s_end,
+            pnl=pnl,
             is_demo=is_demo_trade,
+            demo_balance=demo_balance_after,
         )
-        return
-
-    is_win = winner == side
-    await queries.resolve_signal(signal_id, winner, is_win)
-
-    pnl: float | None = None
-    demo_balance_after: float | None = None
-    if trade_id is not None and amount_usdc is not None:
-        if is_win:
-            pnl = round(amount_usdc * (1.0 / entry_price - 1.0), 4)
-        else:
-            pnl = -amount_usdc
-        await queries.resolve_trade(trade_id, winner, is_win, pnl)
-
-        # Update demo balance if this was a demo trade
-        if is_demo_trade and pnl is not None:
-            demo_balance_after = await _update_demo_balance_after_pnl(pnl)
-
-    # Extract HH:MM from slot_start/slot_end full strings
-    s_start = slot_start.split(" ")[-1] if " " in slot_start else slot_start
-    s_end = slot_end.split(" ")[-1] if " " in slot_end else slot_end
-
-    msg = format_resolution(
-        is_win=is_win,
-        side=side,
-        entry_price=entry_price,
-        slot_start_str=s_start,
-        slot_end_str=s_end,
-        pnl=pnl,
-        is_demo=is_demo_trade,
-        demo_balance=demo_balance_after,
-    )
-    await _send_telegram(msg)
+        await _send_telegram(msg)
+    except Exception as exc:
+        log.exception("_resolve_and_notify crashed")
+        from bot.formatters import format_error
+        await _send_telegram(format_error("Resolution cycle", exc))
 
 
 async def _reconcile_pending() -> None:
@@ -143,64 +148,70 @@ async def _reconcile_pending() -> None:
     log.info("Reconciler: checking %d pending slot(s)...", len(pending))
 
     for item in pending:
-        signal_id = item["signal_id"]
-        slug = item["slug"]
-        side = item["side"]
-        entry_price = item["entry_price"]
-        slot_start = item["slot_start"]
-        slot_end = item["slot_end"]
-        trade_id = item.get("trade_id")
-        amount_usdc = item.get("amount_usdc")
-        is_demo_trade = item.get("is_demo", False)
-
         try:
-            winner, resolved = await resolver.check_resolution(slug)
-        except Exception:
-            log.exception("Reconciler: error checking slug=%s", slug)
+            signal_id = item["signal_id"]
+            slug = item["slug"]
+            side = item["side"]
+            entry_price = item["entry_price"]
+            slot_start = item["slot_start"]
+            slot_end = item["slot_end"]
+            trade_id = item.get("trade_id")
+            amount_usdc = item.get("amount_usdc")
+            is_demo_trade = item.get("is_demo", False)
+
+            try:
+                winner, resolved = await resolver.check_resolution(slug)
+            except Exception:
+                log.exception("Reconciler: error checking slug=%s", slug)
+                continue
+
+            if not resolved:
+                log.debug("Reconciler: slot %s still unresolved — will retry next cycle", slug)
+                continue
+
+            # Resolved — update DB
+            is_win = winner == side
+            await queries.resolve_signal(signal_id, winner, is_win)
+
+            pnl: float | None = None
+            demo_balance_after: float | None = None
+            if trade_id is not None and amount_usdc is not None:
+                if is_win:
+                    pnl = round(amount_usdc * (1.0 / entry_price - 1.0), 4)
+                else:
+                    pnl = -amount_usdc
+                await queries.resolve_trade(trade_id, winner, is_win, pnl)
+
+                # Update demo balance if this was a demo trade
+                if is_demo_trade and pnl is not None:
+                    demo_balance_after = await _update_demo_balance_after_pnl(pnl)
+
+            # Remove from queue
+            await pending_queue.remove_pending(signal_id)
+
+            # Notify Telegram
+            s_start = slot_start.split(" ")[-1] if " " in slot_start else slot_start
+            s_end = slot_end.split(" ")[-1] if " " in slot_end else slot_end
+            msg = format_resolution(
+                is_win=is_win,
+                side=side,
+                entry_price=entry_price,
+                slot_start_str=s_start,
+                slot_end_str=s_end,
+                pnl=pnl,
+                is_demo=is_demo_trade,
+                demo_balance=demo_balance_after,
+            )
+            await _send_telegram(msg)
+            log.info(
+                "Reconciler: resolved signal %d — winner=%s is_win=%s",
+                signal_id, winner, is_win,
+            )
+        except Exception as exc:
+            log.exception("_reconcile_pending: error processing item %s", item)
+            from bot.formatters import format_error
+            await _send_telegram(format_error("Reconcile pending", exc))
             continue
-
-        if not resolved:
-            log.debug("Reconciler: slot %s still unresolved — will retry next cycle", slug)
-            continue
-
-        # Resolved — update DB
-        is_win = winner == side
-        await queries.resolve_signal(signal_id, winner, is_win)
-
-        pnl: float | None = None
-        demo_balance_after: float | None = None
-        if trade_id is not None and amount_usdc is not None:
-            if is_win:
-                pnl = round(amount_usdc * (1.0 / entry_price - 1.0), 4)
-            else:
-                pnl = -amount_usdc
-            await queries.resolve_trade(trade_id, winner, is_win, pnl)
-
-            # Update demo balance if this was a demo trade
-            if is_demo_trade and pnl is not None:
-                demo_balance_after = await _update_demo_balance_after_pnl(pnl)
-
-        # Remove from queue
-        await pending_queue.remove_pending(signal_id)
-
-        # Notify Telegram
-        s_start = slot_start.split(" ")[-1] if " " in slot_start else slot_start
-        s_end = slot_end.split(" ")[-1] if " " in slot_end else slot_end
-        msg = format_resolution(
-            is_win=is_win,
-            side=side,
-            entry_price=entry_price,
-            slot_start_str=s_start,
-            slot_end_str=s_end,
-            pnl=pnl,
-            is_demo=is_demo_trade,
-            demo_balance=demo_balance_after,
-        )
-        await _send_telegram(msg)
-        log.info(
-            "Reconciler: resolved signal %d — winner=%s is_win=%s",
-            signal_id, winner, is_win,
-        )
 
 
 async def _auto_redeem() -> None:
@@ -228,105 +239,124 @@ async def _auto_redeem() -> None:
             await _send_telegram(msg)
             log.info("Auto-redeem: %d position(s) processed, total=%.4f USDC", len(results), total_usdc)
 
-    except Exception:
+    except Exception as exc:
         log.exception("Auto-redeem job failed unexpectedly")
+        from bot.formatters import format_redemption_error
+        await _send_telegram(format_redemption_error(str(exc)))
 
 
 async def _check_and_trade() -> None:
     """Core loop body — called at T-85s for each slot."""
-    from bot.formatters import format_signal, format_skip
+    try:
+        from bot.formatters import format_signal, format_skip
 
-    # 1. Check signal
-    signal = await strategy.check_signal()
-    if signal is None:
-        log.error("Strategy returned None (hard error) — skipping this slot")
-        await _send_telegram("\u274c Strategy error — could not fetch prices. Skipping slot.")
-        _schedule_next()
-        return
+        # 1. Check signal
+        signal = await strategy.check_signal()
+        if signal is None:
+            log.error("Strategy returned None (hard error) — skipping this slot")
+            await _send_telegram("\u274c Strategy error — could not fetch prices. Skipping slot.")
+            return
 
-    slot_start_full = signal["slot_n1_start_full"]
-    slot_end_full = signal["slot_n1_end_full"]
-    slot_start_str = signal["slot_n1_start_str"]
-    slot_end_str = signal["slot_n1_end_str"]
-    slot_ts = signal["slot_n1_ts"]
+        slot_start_full = signal["slot_n1_start_full"]
+        slot_end_full = signal["slot_n1_end_full"]
+        slot_start_str = signal["slot_n1_start_str"]
+        slot_end_str = signal["slot_n1_end_str"]
+        slot_ts = signal["slot_n1_ts"]
 
-    # 2. Log signal to DB
-    if signal["skipped"]:
+        # 2. Log signal to DB
+        if signal["skipped"]:
+            signal_id = await queries.insert_signal(
+                slot_start=slot_start_full,
+                slot_end=slot_end_full,
+                slot_timestamp=slot_ts,
+                side=None,
+                entry_price=None,
+                opposite_price=None,
+                skipped=True,
+            )
+            msg = format_skip(slot_start_str=slot_start_str, slot_end_str=slot_end_str,
+                              up_price=signal["up_price"], down_price=signal["down_price"])
+            await _send_telegram(msg)
+            return
+
+        side = signal["side"]
+        entry_price = signal["entry_price"]
+        opposite_price = signal["opposite_price"]
+        token_id = signal["token_id"]
+        slug = signal.get("slot_n1_slug", f"btc-updown-5m-{slot_ts}")
+
         signal_id = await queries.insert_signal(
             slot_start=slot_start_full,
             slot_end=slot_end_full,
             slot_timestamp=slot_ts,
-            side=None,
-            entry_price=None,
-            opposite_price=None,
-            skipped=True,
+            side=side,
+            entry_price=entry_price,
+            opposite_price=opposite_price,
+            skipped=False,
         )
-        msg = format_skip(slot_start_str=slot_start_str, slot_end_str=slot_end_str,
-                          up_price=signal["up_price"], down_price=signal["down_price"])
+
+        # 3. Check autotrade and compute trade size
+        autotrade = await queries.is_autotrade_enabled()
+        demo_mode = await queries.is_demo_mode()
+
+        # Fetch real Polymarket balance for half-Kelly sizing in real mode
+        balance_val: float | None = None
+        if not demo_mode and _poly_client is not None:
+            try:
+                balance_val = await pm_account.get_balance(_poly_client)
+            except Exception:
+                log.exception("Failed to fetch Polymarket balance for sizing")
+
+        trade_amount = await sizing.get_trade_size(entry_price, real_bankroll=balance_val)
+        sizing_mode = await queries.get_sizing_mode()
+
+        # 4. Send signal notification
+        msg = format_signal(
+            side=side,
+            entry_price=entry_price,
+            slot_start_str=slot_start_str,
+            slot_end_str=slot_end_str,
+            autotrade=autotrade,
+            sizing_mode=sizing_mode,
+            trade_amount=trade_amount,
+        )
         await _send_telegram(msg)
-        _schedule_next()
-        return
 
-    side = signal["side"]
-    entry_price = signal["entry_price"]
-    opposite_price = signal["opposite_price"]
-    token_id = signal["token_id"]
-    slug = signal.get("slot_n1_slug", f"btc-updown-5m-{slot_ts}")
+        # 5. Place trade
+        trade_id: int | None = None
+        amount_usdc: float | None = None
+        is_demo_trade = False
 
-    signal_id = await queries.insert_signal(
-        slot_start=slot_start_full,
-        slot_end=slot_end_full,
-        slot_timestamp=slot_ts,
-        side=side,
-        entry_price=entry_price,
-        opposite_price=opposite_price,
-        skipped=False,
-    )
+        if demo_mode:
+            # Demo mode: simulate trade without a real order
+            is_demo_trade = True
+            amount_usdc = round(trade_amount, 2)
+            demo_bal = await queries.get_demo_balance()
+            if amount_usdc > demo_bal:
+                amount_usdc = round(demo_bal, 2)
+            if amount_usdc <= 0:
+                await _send_telegram(
+                    "\u26a0\ufe0f [DEMO] Insufficient demo balance — trade skipped."
+                )
+            else:
+                trade_id = await queries.insert_trade(
+                    signal_id=signal_id,
+                    slot_start=slot_start_full,
+                    slot_end=slot_end_full,
+                    side=side,
+                    entry_price=entry_price,
+                    amount_usdc=amount_usdc,
+                    fill_price=entry_price,
+                    status="filled",
+                    demo=True,
+                )
+                await _send_telegram(
+                    f"\U0001f4dd [DEMO] Trade placed: {side} ${amount_usdc:.2f} @ ${entry_price:.4f}"
+                )
 
-    # 3. Check autotrade and compute trade size
-    autotrade = await queries.is_autotrade_enabled()
-    demo_mode = await queries.is_demo_mode()
-
-    # Fetch real Polymarket balance for half-Kelly sizing in real mode
-    balance_val: float | None = None
-    if not demo_mode and _poly_client is not None:
-        try:
-            balance_val = await pm_account.get_balance(_poly_client)
-        except Exception:
-            log.exception("Failed to fetch Polymarket balance for sizing")
-
-    trade_amount = await sizing.get_trade_size(entry_price, real_bankroll=balance_val)
-    sizing_mode = await queries.get_sizing_mode()
-
-    # 4. Send signal notification
-    msg = format_signal(
-        side=side,
-        entry_price=entry_price,
-        slot_start_str=slot_start_str,
-        slot_end_str=slot_end_str,
-        autotrade=autotrade,
-        sizing_mode=sizing_mode,
-        trade_amount=trade_amount,
-    )
-    await _send_telegram(msg)
-
-    # 5. Place trade
-    trade_id: int | None = None
-    amount_usdc: float | None = None
-    is_demo_trade = False
-
-    if demo_mode:
-        # Demo mode: simulate trade without a real order
-        is_demo_trade = True
-        amount_usdc = round(trade_amount, 2)
-        demo_bal = await queries.get_demo_balance()
-        if amount_usdc > demo_bal:
-            amount_usdc = round(demo_bal, 2)
-        if amount_usdc <= 0:
-            await _send_telegram(
-                "\u26a0\ufe0f [DEMO] Insufficient demo balance — trade skipped."
-            )
-        else:
+        elif autotrade and _poly_client is not None and token_id:
+            # Real mode: place FOK order on Polymarket
+            amount_usdc = round(trade_amount, 2)
             trade_id = await queries.insert_trade(
                 signal_id=signal_id,
                 slot_start=slot_start_full,
@@ -334,65 +364,51 @@ async def _check_and_trade() -> None:
                 side=side,
                 entry_price=entry_price,
                 amount_usdc=amount_usdc,
-                fill_price=entry_price,
-                status="filled",
-                demo=True,
+                status="pending",
+                demo=False,
             )
-            await _send_telegram(
-                f"\U0001f4dd [DEMO] Trade placed: {side} ${amount_usdc:.2f} @ ${entry_price:.4f}"
+            try:
+                response = await trader.place_fok_order(_poly_client, token_id, amount_usdc)
+                order_id = None
+                if isinstance(response, dict):
+                    order_id = response.get("orderID") or response.get("order_id")
+                await queries.update_trade_status(trade_id, "filled", order_id=order_id)
+                log.info("Trade filled: order_id=%s", order_id)
+            except Exception:
+                log.exception("FOK order failed")
+                await queries.update_trade_status(trade_id, "failed")
+                await _send_telegram(f"\u274c Trade FAILED for {side} slot {slot_start_str}-{slot_end_str} UTC")
+                trade_id = None
+
+        # 6. Schedule resolution after slot N+1 ends
+        resolve_time = datetime.fromtimestamp(slot_ts + SLOT_DURATION + 15, tz=timezone.utc)
+        if SCHEDULER is not None:
+            SCHEDULER.add_job(
+                _resolve_and_notify,
+                trigger="date",
+                run_date=resolve_time,
+                kwargs={
+                    "signal_id": signal_id,
+                    "slug": slug,
+                    "side": side,
+                    "entry_price": entry_price,
+                    "slot_start": slot_start_full,
+                    "slot_end": slot_end_full,
+                    "trade_id": trade_id,
+                    "amount_usdc": amount_usdc,
+                    "is_demo_trade": is_demo_trade,
+                },
+                id=f"resolve_{signal_id}",
+                replace_existing=True,
             )
+            log.debug("Scheduled resolution for signal %d at %s", signal_id, resolve_time.isoformat())
 
-    elif autotrade and _poly_client is not None and token_id:
-        # Real mode: place FOK order on Polymarket
-        amount_usdc = round(trade_amount, 2)
-        trade_id = await queries.insert_trade(
-            signal_id=signal_id,
-            slot_start=slot_start_full,
-            slot_end=slot_end_full,
-            side=side,
-            entry_price=entry_price,
-            amount_usdc=amount_usdc,
-            status="pending",
-            demo=False,
-        )
-        try:
-            response = await trader.place_fok_order(_poly_client, token_id, amount_usdc)
-            order_id = None
-            if isinstance(response, dict):
-                order_id = response.get("orderID") or response.get("order_id")
-            await queries.update_trade_status(trade_id, "filled", order_id=order_id)
-            log.info("Trade filled: order_id=%s", order_id)
-        except Exception:
-            log.exception("FOK order failed")
-            await queries.update_trade_status(trade_id, "failed")
-            await _send_telegram(f"\u274c Trade FAILED for {side} slot {slot_start_str}-{slot_end_str} UTC")
-            trade_id = None
-
-    # 6. Schedule resolution after slot N+1 ends
-    resolve_time = datetime.fromtimestamp(slot_ts + SLOT_DURATION + 15, tz=timezone.utc)
-    if SCHEDULER is not None:
-        SCHEDULER.add_job(
-            _resolve_and_notify,
-            trigger="date",
-            run_date=resolve_time,
-            kwargs={
-                "signal_id": signal_id,
-                "slug": slug,
-                "side": side,
-                "entry_price": entry_price,
-                "slot_start": slot_start_full,
-                "slot_end": slot_end_full,
-                "trade_id": trade_id,
-                "amount_usdc": amount_usdc,
-                "is_demo_trade": is_demo_trade,
-            },
-            id=f"resolve_{signal_id}",
-            replace_existing=True,
-        )
-        log.debug("Scheduled resolution for signal %d at %s", signal_id, resolve_time.isoformat())
-
-    # 7. Schedule next check
-    _schedule_next()
+    except Exception as exc:
+        log.exception("_check_and_trade crashed")
+        from bot.formatters import format_error
+        await _send_telegram(format_error("Signal/trade cycle", exc))
+    finally:
+        _schedule_next()
 
 
 def _schedule_next() -> None:

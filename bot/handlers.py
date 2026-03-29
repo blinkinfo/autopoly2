@@ -101,45 +101,50 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @auth_check
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    connected = False
-    balance = None
-    positions = []
-    if _poly_client:
-        connected = await pm_account.get_connection_status(_poly_client)
-        balance = await pm_account.get_balance(_poly_client)
-        positions = await pm_account.get_open_positions(_poly_client)
+    try:
+        connected = False
+        balance = None
+        positions = []
+        if _poly_client:
+            connected = await pm_account.get_connection_status(_poly_client)
+            balance = await pm_account.get_balance(_poly_client)
+            positions = await pm_account.get_open_positions(_poly_client)
 
-    autotrade = await queries.is_autotrade_enabled()
-    trade_amount = await queries.get_trade_amount()
-    demo_mode = await queries.is_demo_mode()
-    sizing_mode = await queries.get_sizing_mode()
-    demo_balance = await queries.get_demo_balance() if demo_mode else None
-    last_sig = await queries.get_last_signal()
-    last_sig_str = None
-    if last_sig:
-        ss = last_sig["slot_start"].split(" ")[-1] if " " in last_sig["slot_start"] else last_sig["slot_start"]
-        last_sig_str = f"{ss} UTC ({last_sig['side']})"
+        autotrade = await queries.is_autotrade_enabled()
+        trade_amount = await queries.get_trade_amount()
+        demo_mode = await queries.is_demo_mode()
+        sizing_mode = await queries.get_sizing_mode()
+        demo_balance = await queries.get_demo_balance() if demo_mode else None
+        last_sig = await queries.get_last_signal()
+        last_sig_str = None
+        if last_sig:
+            ss = last_sig["slot_start"].split(" ")[-1] if " " in last_sig["slot_start"] else last_sig["slot_start"]
+            last_sig_str = f"{ss} UTC ({last_sig['side']})"
 
-    text = format_status(
-        connected=connected,
-        balance=balance,
-        autotrade=autotrade,
-        trade_amount=trade_amount,
-        open_positions=len(positions),
-        uptime_str=_uptime(),
-        last_signal=last_sig_str,
-        demo_mode=demo_mode,
-        sizing_mode=sizing_mode,
-        demo_balance=demo_balance,
-    )
-    target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
-    if update.callback_query:
-        await update.callback_query.answer()
-        await _safe_edit(update.callback_query, text, reply_markup=back_to_menu())
-    else:
-        if target is None:
-            return
-        await target.reply_text(text, reply_markup=back_to_menu(), parse_mode="HTML")
+        text = format_status(
+            connected=connected,
+            balance=balance,
+            autotrade=autotrade,
+            trade_amount=trade_amount,
+            open_positions=len(positions),
+            uptime_str=_uptime(),
+            last_signal=last_sig_str,
+            demo_mode=demo_mode,
+            sizing_mode=sizing_mode,
+            demo_balance=demo_balance,
+        )
+        target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
+        if update.callback_query:
+            await update.callback_query.answer()
+            await _safe_edit(update.callback_query, text, reply_markup=back_to_menu())
+        else:
+            if target is None:
+                return
+            await target.reply_text(text, reply_markup=back_to_menu(), parse_mode="HTML")
+    except Exception as exc:
+        log.exception("cmd_status failed")
+        from bot.formatters import format_error
+        await update.message.reply_text(format_error("Status check", exc), parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------
@@ -147,17 +152,23 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ---------------------------------------------------------------------------
 
 async def _render_signals(update: Update, limit: int | None, active: str) -> None:
-    stats = await queries.get_signal_stats(limit=limit)
-    label = {"10": "Last 10", "50": "Last 50", "all": "All Time"}[active]
-    text = format_signal_stats(stats, label)
-    recent = await queries.get_recent_signals(10)
-    text += format_recent_signals(recent)
-    kb = signal_filter_row(active)
-    if update.callback_query:
-        await update.callback_query.answer()
-        await _safe_edit(update.callback_query, text, reply_markup=kb)
-    else:
-        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    try:
+        stats = await queries.get_signal_stats(limit=limit)
+        label = {"10": "Last 10", "50": "Last 50", "all": "All Time"}[active]
+        text = format_signal_stats(stats, label)
+        recent = await queries.get_recent_signals(10)
+        text += format_recent_signals(recent)
+        kb = signal_filter_row(active)
+        if update.callback_query:
+            await update.callback_query.answer()
+            await _safe_edit(update.callback_query, text, reply_markup=kb)
+        else:
+            await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as exc:
+        log.exception("_render_signals failed")
+        from bot.formatters import format_error
+        query = update.callback_query
+        await query.edit_message_text(format_error("Loading signals", exc), parse_mode="HTML")
 
 
 @auth_check
@@ -170,17 +181,23 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # ---------------------------------------------------------------------------
 
 async def _render_trades(update: Update, limit: int | None, active: str, demo: bool = False) -> None:
-    stats = await queries.get_trade_stats(limit=limit, demo=demo)
-    label = {"10": "Last 10", "50": "Last 50", "all": "All Time"}[active]
-    text = format_trade_stats(stats, label, demo=demo)
-    recent = await queries.get_recent_trades(10, demo=demo)
-    text += format_recent_trades(recent)
-    kb = trade_filter_row(active, demo=demo)
-    if update.callback_query:
-        await update.callback_query.answer()
-        await _safe_edit(update.callback_query, text, reply_markup=kb)
-    else:
-        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    try:
+        stats = await queries.get_trade_stats(limit=limit, demo=demo)
+        label = {"10": "Last 10", "50": "Last 50", "all": "All Time"}[active]
+        text = format_trade_stats(stats, label, demo=demo)
+        recent = await queries.get_recent_trades(10, demo=demo)
+        text += format_recent_trades(recent)
+        kb = trade_filter_row(active, demo=demo)
+        if update.callback_query:
+            await update.callback_query.answer()
+            await _safe_edit(update.callback_query, text, reply_markup=kb)
+        else:
+            await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as exc:
+        log.exception("_render_trades failed")
+        from bot.formatters import format_error
+        query = update.callback_query
+        await query.edit_message_text(format_error("Loading trades", exc), parse_mode="HTML")
 
 
 @auth_check
@@ -194,22 +211,27 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @auth_check
 async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    bankroll = await queries.get_demo_bankroll()
-    balance = await queries.get_demo_balance()
-    stats = await queries.get_trade_stats(demo=True)
-    trade_count = stats["total_trades"]
+    try:
+        bankroll = await queries.get_demo_bankroll()
+        balance = await queries.get_demo_balance()
+        stats = await queries.get_trade_stats(demo=True)
+        trade_count = stats["total_trades"]
 
-    text = format_demo_status(
-        bankroll=bankroll,
-        balance=balance,
-        trade_count=trade_count,
-    )
-    kb = demo_dashboard()
-    if update.callback_query:
-        await update.callback_query.answer()
-        await _safe_edit(update.callback_query, text, reply_markup=kb)
-    else:
-        await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+        text = format_demo_status(
+            bankroll=bankroll,
+            balance=balance,
+            trade_count=trade_count,
+        )
+        kb = demo_dashboard()
+        if update.callback_query:
+            await update.callback_query.answer()
+            await _safe_edit(update.callback_query, text, reply_markup=kb)
+        else:
+            await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as exc:
+        log.exception("cmd_demo failed")
+        from bot.formatters import format_error
+        await update.message.reply_text(format_error("Demo dashboard", exc), parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------
@@ -378,23 +400,28 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         amount = round(amount, 2)
-        await queries.set_setting("trade_amount_usdc", str(amount))
-        await update.message.reply_text(
-            f"\u2705 Trade amount updated to <b>${amount:.2f}</b>",
-            parse_mode="HTML",
-        )
-        # Show settings panel again
-        autotrade = await queries.is_autotrade_enabled()
-        sizing_mode = await queries.get_sizing_mode()
-        demo_on = await queries.is_demo_mode()
-        demo_balance = await queries.get_demo_balance()
-        auto_redeem = await queries.is_auto_redeem_enabled()
-        kb = settings_keyboard(autotrade, amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
-        await update.message.reply_text(
-            "\u2699\ufe0f <b>Settings</b>",
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
+        try:
+            await queries.set_setting("trade_amount_usdc", str(amount))
+            await update.message.reply_text(
+                f"\u2705 Trade amount updated to <b>${amount:.2f}</b>",
+                parse_mode="HTML",
+            )
+            # Show settings panel again
+            autotrade = await queries.is_autotrade_enabled()
+            sizing_mode = await queries.get_sizing_mode()
+            demo_on = await queries.is_demo_mode()
+            demo_balance = await queries.get_demo_balance()
+            auto_redeem = await queries.is_auto_redeem_enabled()
+            kb = settings_keyboard(autotrade, amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
+            await update.message.reply_text(
+                "\u2699\ufe0f <b>Settings</b>",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            log.exception("text_handler DB write failed")
+            from bot.formatters import format_error
+            await update.message.reply_text(format_error("Saving setting", exc), parse_mode="HTML")
         return
 
     # --- Demo bankroll input ---
@@ -412,24 +439,29 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         amount = round(amount, 2)
-        await queries.set_setting("demo_bankroll", str(amount))
-        await queries.set_demo_balance(amount)
-        await update.message.reply_text(
-            f"\u2705 Demo bankroll set to <b>${amount:.2f}</b> (balance reset)",
-            parse_mode="HTML",
-        )
-        # Show settings panel again
-        autotrade = await queries.is_autotrade_enabled()
-        trade_amount = await queries.get_trade_amount()
-        sizing_mode = await queries.get_sizing_mode()
-        demo_on = await queries.is_demo_mode()
-        auto_redeem = await queries.is_auto_redeem_enabled()
-        kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, amount, auto_redeem_on=auto_redeem)
-        await update.message.reply_text(
-            "\u2699\ufe0f <b>Settings</b>",
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
+        try:
+            await queries.set_setting("demo_bankroll", str(amount))
+            await queries.set_demo_balance(amount)
+            await update.message.reply_text(
+                f"\u2705 Demo bankroll set to <b>${amount:.2f}</b> (balance reset)",
+                parse_mode="HTML",
+            )
+            # Show settings panel again
+            autotrade = await queries.is_autotrade_enabled()
+            trade_amount = await queries.get_trade_amount()
+            sizing_mode = await queries.get_sizing_mode()
+            demo_on = await queries.is_demo_mode()
+            auto_redeem = await queries.is_auto_redeem_enabled()
+            kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, amount, auto_redeem_on=auto_redeem)
+            await update.message.reply_text(
+                "\u2699\ufe0f <b>Settings</b>",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            log.exception("text_handler DB write failed")
+            from bot.formatters import format_error
+            await update.message.reply_text(format_error("Saving setting", exc), parse_mode="HTML")
         return
 
 
@@ -449,8 +481,34 @@ def register(application) -> None:
     application.add_handler(CallbackQueryHandler(callback_router))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    async def _error_handler(update, context):
-        log.error("Telegram error: %s", context.error)
-        # Don't re-raise — just log it so the bot keeps running
+    async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global error handler — logs and sends error to Telegram."""
+        import traceback
+        from bot.formatters import format_error
+
+        exc = context.error
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        log.error("Unhandled exception:\n%s", tb)
+
+        # Determine where to send the error
+        chat_id: int | None = None
+        if isinstance(update, Update):
+            if update.effective_chat:
+                chat_id = update.effective_chat.id
+            elif update.callback_query and update.callback_query.message:
+                chat_id = update.callback_query.message.chat_id
+
+        if chat_id is None:
+            chat_id = cfg.ALLOWED_CHAT_ID  # fall back to the configured chat
+
+        text = format_error("Unexpected error", exc)
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+            )
+        except Exception:
+            log.exception("Failed to send error notification to Telegram")
 
     application.add_error_handler(_error_handler)

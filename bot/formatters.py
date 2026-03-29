@@ -283,3 +283,22 @@ def format_help() -> str:
         "With AutoTrade ON, a FOK market order is placed automatically "
         "(or simulated in Demo mode)."
     )
+
+
+def format_error(context: str, exc: Exception) -> str:
+    """Generic error card for user-facing Telegram error messages.
+
+    Args:
+        context: Short label for where the error occurred (e.g. "Status check").
+        exc: The exception instance.
+    """
+    exc_type = type(exc).__name__
+    msg = str(exc)
+    # Truncate long messages so the Telegram message stays readable
+    if len(msg) > 200:
+        msg = msg[:197] + "..."
+    return (
+        f"\u26a0\ufe0f <b>Error \u2014 {context}</b>\n\n"
+        f"<code>{exc_type}: {msg}</code>\n\n"
+        "The error has been logged. If this keeps happening, check the logs."
+    )

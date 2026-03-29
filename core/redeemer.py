@@ -163,11 +163,6 @@ async def redeem_winning_positions(poly_client: Any) -> list[dict[str, Any]]:
     already_done = await queries.get_redeemed_condition_ids()
     new_positions = [
         p for p in positions
-        if p.get("conditionId") or p.get("condition_id") not in already_done
-    ]
-    # More careful dedup
-    new_positions = [
-        p for p in positions
         if (p.get("conditionId") or p.get("condition_id", "")) not in already_done
     ]
     if not new_positions:

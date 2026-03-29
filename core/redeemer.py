@@ -25,7 +25,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 try:
     from poly_web3 import PolyWeb3Service  # type: ignore[import]
-    from py_builder_relayer_client import RelayClient  # type: ignore[import]
+    from py_builder_relayer_client.client import RelayClient  # type: ignore[import]
+    from py_builder_signing_sdk.config import BuilderConfig  # type: ignore[import]
+    from py_builder_signing_sdk.sdk_types import BuilderApiKeyCreds  # type: ignore[import]
     _POLY_WEB3_AVAILABLE = True
 except ImportError:
     log.warning(
@@ -85,21 +87,20 @@ def _parse_amount_usdc(position: dict[str, Any]) -> float:
 # ---------------------------------------------------------------------------
 
 def _build_poly_web3_service(clob_client: Any) -> Any:
-    """Construct a PolyWeb3Service using creds derived from *clob_client*.
-
-    Uses the same create_or_derive_api_creds() pattern as polymarket/client.py.
-    """
-    from py_clob_client.client import ClobClient  # type: ignore[import]
-    from py_clob_client.clob_types import ApiCreds  # type: ignore[import]
-
-    # Derive Builder API creds from the existing CLOB client
-    creds = clob_client.client.create_or_derive_api_creds()
+    """Construct a PolyWeb3Service using builder credentials from config."""
+    builder_config = BuilderConfig(
+        local_builder_creds=BuilderApiKeyCreds(
+            key=cfg.POLY_BUILDER_API_KEY,
+            secret=cfg.POLY_BUILDER_SECRET,
+            passphrase=cfg.POLY_BUILDER_PASSPHRASE,
+        )
+    )
 
     relay_client = RelayClient(
         relayer_url=cfg.RELAYER_URL,
-        api_key=creds.api_key,
-        api_secret=creds.api_secret,
-        api_passphrase=creds.api_passphrase,
+        chain_id=cfg.CHAIN_ID,
+        private_key=cfg.POLYMARKET_PRIVATE_KEY,
+        builder_config=builder_config,
     )
 
     service = PolyWeb3Service(

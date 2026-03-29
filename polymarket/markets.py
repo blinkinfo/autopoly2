@@ -98,8 +98,10 @@ async def get_clob_best_ask(token_id: str, client: httpx.AsyncClient) -> float |
 
     GET https://clob.polymarket.com/book?token_id={token_id}
 
-    The ask side represents what a buyer pays. We return asks[0]["price"]
-    which is the lowest ask (best ask) — this matches what Polymarket UI shows.
+    The best ask is the LOWEST ask price (what a buyer pays to get filled
+    immediately). Rather than relying on the API's sort order we explicitly
+    take the minimum price across all ask levels, which is robust to any
+    future changes in how Polymarket returns the data.
 
     Returns float price or None on error / empty book.
     """
@@ -119,10 +121,14 @@ async def get_clob_best_ask(token_id: str, client: httpx.AsyncClient) -> float |
         return None
 
     try:
-        # asks are sorted DESCENDING (highest price first) — last entry is best (lowest) ask
-        best_ask = float(asks[-1]["price"])
-        log.debug("CLOB best ask for token_id=%s: %.4f (book range: %.4f–%.4f, %d levels)",
-                  token_id, best_ask, float(asks[-1]["price"]), float(asks[0]["price"]), len(asks))
+        # Bug fix: use min() over all ask prices instead of relying on sort
+        # order, which may change. The best (lowest) ask is what a buyer pays.
+        prices = [float(a["price"]) for a in asks]
+        best_ask = min(prices)
+        log.debug(
+            "CLOB best ask for token_id=%s: %.4f (book range: %.4f\u2013%.4f, %d levels)",
+            token_id, best_ask, min(prices), max(prices), len(asks),
+        )
         return best_ask
     except (KeyError, ValueError, IndexError):
         log.exception("Failed to parse CLOB asks for token_id=%s", token_id)

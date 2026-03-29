@@ -27,7 +27,7 @@ def main_menu() -> InlineKeyboardMarkup:
 
 
 # ---------------------------------------------------------------------------
-# Settings
+# Settings  (Suggestion 1: grouped into logical rows, reduced from 8 to 5 rows)
 # ---------------------------------------------------------------------------
 
 def settings_keyboard(
@@ -41,18 +41,40 @@ def settings_keyboard(
     at_label = "\U0001f916 AutoTrade: ON" if autotrade_on else "\U0001f916 AutoTrade: OFF"
     sizing_label = "Fixed" if sizing_mode == "fixed" else "Half-Kelly"
     demo_label = "\U0001f4dd Demo: ON" if demo_on else "\U0001f4dd Demo: OFF"
+    redeem_label = "\U0001f4b0 Redeem: ON" if auto_redeem_on else "\U0001f4b0 Redeem: OFF"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(at_label, callback_data="toggle_autotrade")],
-        [InlineKeyboardButton(f"\U0001f4b5 Trade Amount: ${trade_amount:.2f}", callback_data="change_amount")],
-        [InlineKeyboardButton(f"\U0001f4cf Sizing: {sizing_label}", callback_data="toggle_sizing")],
-        [InlineKeyboardButton(demo_label, callback_data="toggle_demo")],
-        [InlineKeyboardButton(f"\U0001f4b0 Demo Balance: ${demo_balance:.2f}", callback_data="change_demo_bankroll")],
+        # Row 1 — AutoTrade toggle  |  Trade Amount
+        [
+            InlineKeyboardButton(at_label, callback_data="toggle_autotrade"),
+            InlineKeyboardButton(f"\U0001f4b5 ${trade_amount:.2f}", callback_data="change_amount"),
+        ],
+        # Row 2 — Sizing mode  |  Auto Redeem
+        [
+            InlineKeyboardButton(f"\U0001f4cf Sizing: {sizing_label}", callback_data="toggle_sizing"),
+            InlineKeyboardButton(redeem_label, callback_data="toggle_auto_redeem"),
+        ],
+        # Row 3 — Demo toggle  |  Demo Balance
+        [
+            InlineKeyboardButton(demo_label, callback_data="toggle_demo"),
+            InlineKeyboardButton(f"\U0001f4b0 Balance: ${demo_balance:.2f}", callback_data="change_demo_bankroll"),
+        ],
+        # Row 4 — Reset Demo (destructive — requires confirmation)
         [InlineKeyboardButton("\U0001f504 Reset Demo", callback_data="reset_demo")],
-        [InlineKeyboardButton(
-            "\U0001f4b0 Auto Redeem: ON" if auto_redeem_on else "\U0001f4b0 Auto Redeem: OFF",
-            callback_data="toggle_auto_redeem",
-        )],
+        # Row 5 — Navigation
         [InlineKeyboardButton("\U0001f519 Back to Menu", callback_data="cmd_menu")],
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Reset Demo confirmation keyboard  (Suggestion 2)
+# ---------------------------------------------------------------------------
+
+def reset_demo_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("\u2705 Yes, Reset", callback_data="reset_demo_confirm"),
+            InlineKeyboardButton("\u274c Cancel", callback_data="cmd_settings"),
+        ],
     ])
 
 
@@ -119,6 +141,17 @@ def demo_dashboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("\U0001f4b0 Demo Trades", callback_data="trades_mode_demo")],
         [InlineKeyboardButton("\U0001f504 Reset Demo", callback_data="reset_demo")],
         [InlineKeyboardButton("\U0001f519 Back to Menu", callback_data="cmd_menu")],
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Input-wait cancel keyboard  (Suggestion 4)
+# ---------------------------------------------------------------------------
+
+def cancel_input_keyboard() -> InlineKeyboardMarkup:
+    """Shown while the bot is waiting for the user to type a value."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\u274c Cancel", callback_data="cmd_settings")],
     ])
 
 

@@ -322,7 +322,7 @@ def _compute_streaks(results: list[int]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Analytics
+# Analytics  (Bug fix: all SQL uses parameterized queries — no f-string interpolation)
 # ---------------------------------------------------------------------------
 
 async def get_signal_stats(limit: int | None = None) -> dict[str, Any]:
@@ -330,29 +330,34 @@ async def get_signal_stats(limit: int | None = None) -> dict[str, Any]:
         db.row_factory = aiosqlite.Row
 
         # Total signals (non-skipped)
-        q = "SELECT COUNT(*) as cnt FROM signals WHERE skipped = 0"
-        row = await (await db.execute(q)).fetchone()
+        row = await (await db.execute(
+            "SELECT COUNT(*) as cnt FROM signals WHERE skipped = 0"
+        )).fetchone()
         total = row["cnt"]
 
         # Skip count
-        q2 = "SELECT COUNT(*) as cnt FROM signals WHERE skipped = 1"
-        row2 = await (await db.execute(q2)).fetchone()
+        row2 = await (await db.execute(
+            "SELECT COUNT(*) as cnt FROM signals WHERE skipped = 1"
+        )).fetchone()
         skip_count = row2["cnt"]
 
-        # Resolved signals for stats
-        if limit:
-            inner = (
-                f"SELECT * FROM signals WHERE skipped = 0 AND is_win IS NOT NULL "
-                f"ORDER BY id DESC LIMIT {limit}"
+        # Resolved signals for stats — fully parameterized
+        if limit is not None:
+            cursor = await db.execute(
+                "SELECT is_win FROM ("
+                "  SELECT id, is_win FROM signals "
+                "  WHERE skipped = 0 AND is_win IS NOT NULL "
+                "  ORDER BY id DESC LIMIT ?"
+                ") ORDER BY id ASC",
+                (limit,),
             )
-            query = f"SELECT is_win FROM ({inner}) ORDER BY id ASC"
         else:
-            query = (
-                "SELECT is_win FROM signals WHERE skipped = 0 AND is_win IS NOT NULL "
+            cursor = await db.execute(
+                "SELECT is_win FROM signals "
+                "WHERE skipped = 0 AND is_win IS NOT NULL "
                 "ORDER BY id ASC"
             )
 
-        cursor = await db.execute(query)
         rows = await cursor.fetchall()
         results = [r["is_win"] for r in rows]
 
@@ -378,23 +383,29 @@ async def get_trade_stats(limit: int | None = None, demo: bool = False) -> dict[
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
 
-        if limit:
-            inner = (
-                f"SELECT * FROM trades WHERE is_win IS NOT NULL AND is_demo = {demo_flag} "
-                f"ORDER BY id DESC LIMIT {limit}"
+        # Fully parameterized — no f-string interpolation
+        if limit is not None:
+            cursor = await db.execute(
+                "SELECT is_win, amount_usdc, pnl FROM ("
+                "  SELECT id, is_win, amount_usdc, pnl FROM trades "
+                "  WHERE is_win IS NOT NULL AND is_demo = ? "
+                "  ORDER BY id DESC LIMIT ?"
+                ") ORDER BY id ASC",
+                (demo_flag, limit),
             )
-            query = f"SELECT is_win, amount_usdc, pnl FROM ({inner}) ORDER BY id ASC"
         else:
-            query = (
+            cursor = await db.execute(
                 "SELECT is_win, amount_usdc, pnl FROM trades "
-                f"WHERE is_win IS NOT NULL AND is_demo = {demo_flag} ORDER BY id ASC"
+                "WHERE is_win IS NOT NULL AND is_demo = ? ORDER BY id ASC",
+                (demo_flag,),
             )
 
-        cursor = await db.execute(query)
         rows = await cursor.fetchall()
 
-        total_q = f"SELECT COUNT(*) as cnt FROM trades WHERE is_demo = {demo_flag}"
-        total_row = await (await db.execute(total_q)).fetchone()
+        total_row = await (await db.execute(
+            "SELECT COUNT(*) as cnt FROM trades WHERE is_demo = ?",
+            (demo_flag,),
+        )).fetchone()
         total_trades = total_row["cnt"]
 
     results = [r["is_win"] for r in rows]

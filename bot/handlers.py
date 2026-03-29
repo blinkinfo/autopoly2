@@ -19,7 +19,9 @@ from telegram.ext import (
 import config as cfg
 from bot.formatters import (
     format_demo_status,
+    format_error,
     format_help,
+    format_menu_header,
     format_recent_signals,
     format_recent_trades,
     format_redemption_notification,
@@ -29,8 +31,10 @@ from bot.formatters import (
 )
 from bot.keyboards import (
     back_to_menu,
+    cancel_input_keyboard,
     demo_dashboard,
     main_menu,
+    reset_demo_confirm_keyboard,
     settings_keyboard,
     signal_filter_row,
     trade_filter_row,
@@ -82,16 +86,46 @@ async def _safe_edit(query, text, reply_markup=None, parse_mode="HTML"):
 
 
 # ---------------------------------------------------------------------------
+# Suggestion 6: dynamic menu header with live stats
+# ---------------------------------------------------------------------------
+
+async def _build_menu_text() -> str:
+    """Build main-menu header text with live signal/trade stats."""
+    try:
+        sig_stats = await queries.get_signal_stats()
+        trade_stats = await queries.get_trade_stats(demo=False)
+        # Try to get pending count from pending queue file without importing
+        # core module (avoids circular imports); fall back to 0 gracefully.
+        pending_count = 0
+        try:
+            import json
+            import os
+            pq_path = os.path.join("data", "pending_slots.json")
+            if os.path.exists(pq_path):
+                with open(pq_path) as f:
+                    pq = json.load(f)
+                pending_count = len(pq) if isinstance(pq, list) else 0
+        except Exception:
+            pending_count = 0
+        return format_menu_header(
+            total_signals=sig_stats["total_signals"],
+            win_pct=sig_stats["win_pct"],
+            net_pnl=trade_stats["net_pnl"],
+            total_trades=trade_stats["total_trades"],
+            pending_count=pending_count,
+        )
+    except Exception:
+        # Fallback to static header if DB isn't ready yet
+        return "\U0001f916 <b>AutoPoly Menu</b>\n\nSelect an option:"
+
+
+# ---------------------------------------------------------------------------
 # /start
 # ---------------------------------------------------------------------------
 
 @auth_check
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "\U0001f916 <b>Welcome to AutoPoly!</b>\n\n"
-        "BTC Up/Down 5-min trading bot for Polymarket.\n"
-        "Select an option below:"
-    )
+    text = await _build_menu_text()
     await update.message.reply_text(text, reply_markup=main_menu(), parse_mode="HTML")
 
 
@@ -133,18 +167,24 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             sizing_mode=sizing_mode,
             demo_balance=demo_balance,
         )
-        target = update.message if update.message else (update.callback_query.message if update.callback_query else None)
         if update.callback_query:
             await update.callback_query.answer()
             await _safe_edit(update.callback_query, text, reply_markup=back_to_menu())
         else:
+            target = update.message
             if target is None:
                 return
             await target.reply_text(text, reply_markup=back_to_menu(), parse_mode="HTML")
     except Exception as exc:
         log.exception("cmd_status failed")
-        from bot.formatters import format_error
-        await update.message.reply_text(format_error("Status check", exc), parse_mode="HTML")
+        if update.callback_query:
+            await _safe_edit(
+                update.callback_query,
+                format_error("Status check", exc),
+                reply_markup=back_to_menu(),
+            )
+        elif update.message:
+            await update.message.reply_text(format_error("Status check", exc), parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +206,14 @@ async def _render_signals(update: Update, limit: int | None, active: str) -> Non
             await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
         log.exception("_render_signals failed")
-        from bot.formatters import format_error
-        query = update.callback_query
-        await query.edit_message_text(format_error("Loading signals", exc), parse_mode="HTML")
+        if update.callback_query:
+            await _safe_edit(
+                update.callback_query,
+                format_error("Loading signals", exc),
+                reply_markup=back_to_menu(),
+            )
+        elif update.message:
+            await update.message.reply_text(format_error("Loading signals", exc), parse_mode="HTML")
 
 
 @auth_check
@@ -195,9 +240,14 @@ async def _render_trades(update: Update, limit: int | None, active: str, demo: b
             await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
         log.exception("_render_trades failed")
-        from bot.formatters import format_error
-        query = update.callback_query
-        await query.edit_message_text(format_error("Loading trades", exc), parse_mode="HTML")
+        if update.callback_query:
+            await _safe_edit(
+                update.callback_query,
+                format_error("Loading trades", exc),
+                reply_markup=back_to_menu(),
+            )
+        elif update.message:
+            await update.message.reply_text(format_error("Loading trades", exc), parse_mode="HTML")
 
 
 @auth_check
@@ -230,8 +280,14 @@ async def cmd_demo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as exc:
         log.exception("cmd_demo failed")
-        from bot.formatters import format_error
-        await update.message.reply_text(format_error("Demo dashboard", exc), parse_mode="HTML")
+        if update.callback_query:
+            await _safe_edit(
+                update.callback_query,
+                format_error("Demo dashboard", exc),
+                reply_markup=back_to_menu(),
+            )
+        elif update.message:
+            await update.message.reply_text(format_error("Demo dashboard", exc), parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +302,12 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     demo_on = await queries.is_demo_mode()
     demo_balance = await queries.get_demo_balance()
     auto_redeem = await queries.is_auto_redeem_enabled()
-    text = "\u2699\ufe0f <b>Settings</b>\n\nTap a button to change:"
+    text = (
+        "\u2699\ufe0f <b>Settings</b>\n\n"
+        "<b>TRADING</b>  AutoTrade | Amount | Sizing | Redeem\n"
+        "<b>DEMO</b>  Toggle | Balance | Reset\n\n"
+        "Tap a button to change:"
+    )
     kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
     if update.callback_query:
         await update.callback_query.answer()
@@ -278,9 +339,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     data = query.data
 
+    # -----------------------------------------------------------------------
+    # Navigation
+    # -----------------------------------------------------------------------
     if data == "cmd_menu":
+        # Suggestion 4: clear any pending input flags when user navigates away
+        context.user_data.pop("awaiting_amount", None)
+        context.user_data.pop("awaiting_demo_bankroll", None)
         await query.answer()
-        text = "\U0001f916 <b>AutoPoly Menu</b>\n\nSelect an option:"
+        text = await _build_menu_text()
         await _safe_edit(query, text, reply_markup=main_menu())
 
     elif data == "cmd_status":
@@ -293,6 +360,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _render_trades(update, limit=None, active="all", demo=False)
 
     elif data == "cmd_settings":
+        # Suggestion 4: clear any pending input flags when navigating to settings
+        context.user_data.pop("awaiting_amount", None)
+        context.user_data.pop("awaiting_demo_bankroll", None)
         await cmd_settings(update, context)
 
     elif data == "cmd_help":
@@ -301,7 +371,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data == "cmd_demo":
         await cmd_demo(update, context)
 
+    # -----------------------------------------------------------------------
     # Signal filters
+    # -----------------------------------------------------------------------
     elif data == "signals_10":
         await _render_signals(update, limit=10, active="10")
     elif data == "signals_50":
@@ -309,7 +381,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data == "signals_all":
         await _render_signals(update, limit=None, active="all")
 
-    # Trade filters (amount)
+    # -----------------------------------------------------------------------
+    # Trade filters
+    # -----------------------------------------------------------------------
     elif data == "trades_10":
         demo = context.user_data.get("trades_demo_filter", False)
         await _render_trades(update, limit=10, active="10", demo=demo)
@@ -320,7 +394,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         demo = context.user_data.get("trades_demo_filter", False)
         await _render_trades(update, limit=None, active="all", demo=demo)
 
-    # Trade filters (demo/real)
     elif data == "trades_mode_real":
         context.user_data["trades_demo_filter"] = False
         await _render_trades(update, limit=None, active="all", demo=False)
@@ -328,7 +401,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["trades_demo_filter"] = True
         await _render_trades(update, limit=None, active="all", demo=True)
 
-    # Settings
+    # -----------------------------------------------------------------------
+    # Settings toggles
+    # -----------------------------------------------------------------------
     elif data == "toggle_autotrade":
         current = await queries.is_autotrade_enabled()
         await queries.set_setting("autotrade_enabled", "false" if current else "true")
@@ -350,12 +425,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await queries.set_setting("auto_redeem_enabled", "false" if current else "true")
         await cmd_settings(update, context)
 
+    # -----------------------------------------------------------------------
+    # Input prompts  (Suggestion 4: show cancel button + waiting indicator)
+    # -----------------------------------------------------------------------
     elif data == "change_amount":
         await query.answer()
         await _safe_edit(
             query,
             "\U0001f4b5 <b>Set Trade Amount</b>\n\n"
-            "Type the new amount in USDC (e.g. <code>2.50</code>):",
+            "Type the new amount in USDC (e.g. <code>2.50</code>):\n\n"
+            "<i>Waiting for your input\u2026</i>",
+            reply_markup=cancel_input_keyboard(),
         )
         context.user_data["awaiting_amount"] = True
 
@@ -365,11 +445,31 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             query,
             "\U0001f4b0 <b>Set Demo Bankroll</b>\n\n"
             "Type the new bankroll amount in USDC (e.g. <code>500</code>).\n"
-            "This also resets the current demo balance to the new amount.",
+            "This also resets the current demo balance to the new amount.\n\n"
+            "<i>Waiting for your input\u2026</i>",
+            reply_markup=cancel_input_keyboard(),
         )
         context.user_data["awaiting_demo_bankroll"] = True
 
+    # -----------------------------------------------------------------------
+    # Reset Demo — two-step confirmation  (Suggestion 2)
+    # -----------------------------------------------------------------------
     elif data == "reset_demo":
+        bankroll = await queries.get_demo_bankroll()
+        balance = await queries.get_demo_balance()
+        diff = balance - bankroll
+        sign = "+" if diff >= 0 else ""
+        await query.answer()
+        await _safe_edit(
+            query,
+            "\U0001f504 <b>Reset Demo Balance?</b>\n\n"
+            f"Current balance: <b>${balance:.2f}</b> ({sign}${diff:.2f})\n"
+            f"Will reset to: <b>${bankroll:.2f}</b>\n\n"
+            "\u26a0\ufe0f This cannot be undone.",
+            reply_markup=reset_demo_confirm_keyboard(),
+        )
+
+    elif data == "reset_demo_confirm":
         bankroll = await queries.get_demo_bankroll()
         await queries.set_demo_balance(bankroll)
         await query.answer(f"Demo balance reset to ${bankroll:.2f}")
@@ -414,13 +514,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             auto_redeem = await queries.is_auto_redeem_enabled()
             kb = settings_keyboard(autotrade, amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
             await update.message.reply_text(
-                "\u2699\ufe0f <b>Settings</b>",
+                "\u2699\ufe0f <b>Settings</b>\n\n"
+                "<b>TRADING</b>  AutoTrade | Amount | Sizing | Redeem\n"
+                "<b>DEMO</b>  Toggle | Balance | Reset\n\n"
+                "Tap a button to change:",
                 reply_markup=kb,
                 parse_mode="HTML",
             )
         except Exception as exc:
             log.exception("text_handler DB write failed")
-            from bot.formatters import format_error
             await update.message.reply_text(format_error("Saving setting", exc), parse_mode="HTML")
         return
 
@@ -454,13 +556,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             auto_redeem = await queries.is_auto_redeem_enabled()
             kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, amount, auto_redeem_on=auto_redeem)
             await update.message.reply_text(
-                "\u2699\ufe0f <b>Settings</b>",
+                "\u2699\ufe0f <b>Settings</b>\n\n"
+                "<b>TRADING</b>  AutoTrade | Amount | Sizing | Redeem\n"
+                "<b>DEMO</b>  Toggle | Balance | Reset\n\n"
+                "Tap a button to change:",
                 reply_markup=kb,
                 parse_mode="HTML",
             )
         except Exception as exc:
             log.exception("text_handler DB write failed")
-            from bot.formatters import format_error
             await update.message.reply_text(format_error("Saving setting", exc), parse_mode="HTML")
         return
 
@@ -484,7 +588,6 @@ def register(application) -> None:
     async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Global error handler — logs and sends error to Telegram."""
         import traceback
-        from bot.formatters import format_error
 
         exc = context.error
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))

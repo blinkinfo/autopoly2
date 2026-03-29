@@ -178,6 +178,7 @@ def format_status(
     sizing_mode: str = "fixed",
     demo_balance: float | None = None,
 ) -> str:
+    """Suggestion 5: top-line health summary before the detail fields."""
     conn_icon = "\U0001f7e2" if connected else "\U0001f534"
     conn_text = "Connected" if connected else "Disconnected"
     at_text = "ON" if autotrade else "OFF"
@@ -186,9 +187,17 @@ def format_status(
     mode_text = "Demo" if demo_mode else "Real"
     sizing_label = "Fixed" if sizing_mode == "fixed" else "Half-Kelly"
 
+    # Build quick health summary line
+    health_parts = ["ONLINE" if connected else "OFFLINE"]
+    if autotrade:
+        health_parts.append(f"{mode_text} trading")
+    else:
+        health_parts.append("Watching only")
+    health_line = " | ".join(health_parts)
+
     SEP = "\u2501" * 20
     lines = [
-        "\U0001f916 <b>AutoPoly Status</b>",
+        f"\U0001f916 <b>AutoPoly \u2014 {health_line}</b>",
         SEP,
         f"{conn_icon} Bot: Running",
         f"\U0001f517 Polymarket: {conn_text}",
@@ -208,6 +217,25 @@ def format_status(
         f"\U0001f4e1 Last Signal: {sig_text}",
     ]
     return "\n".join(lines)
+
+
+def format_menu_header(
+    total_signals: int,
+    win_pct: float,
+    net_pnl: float,
+    total_trades: int,
+    pending_count: int = 0,
+) -> str:
+    """Suggestion 6: dynamic main-menu header showing key stats at a glance."""
+    pnl_sign = "+" if net_pnl >= 0 else ""
+    pending_str = f"  ({pending_count} pending)" if pending_count > 0 else ""
+    return (
+        "\U0001f916 <b>AutoPoly</b>\n\n"
+        f"\U0001f4e1 Signals: {total_signals} ({win_pct}% win rate)\n"
+        f"\U0001f4b0 Trades: {total_trades} "
+        f"(P&L: {pnl_sign}${net_pnl:.2f}){pending_str}\n\n"
+        "Select an option:"
+    )
 
 
 def format_demo_status(
@@ -231,6 +259,7 @@ def format_demo_status(
 
 
 def format_recent_signals(signals: list[dict[str, Any]]) -> str:
+    """Suggestion 3: cleaner mini-card format, scannable win/loss at a glance."""
     if not signals:
         return "\nNo signals recorded yet."
     lines = ["\n\U0001f4cb <b>Recent Signals:</b>"]
@@ -238,27 +267,52 @@ def format_recent_signals(signals: list[dict[str, Any]]) -> str:
         ss = s["slot_start"].split(" ")[-1] if " " in s["slot_start"] else s["slot_start"]
         se = s["slot_end"].split(" ")[-1] if " " in s["slot_end"] else s["slot_end"]
         if s["skipped"]:
-            lines.append(f"\u23ed\ufe0f {ss}-{se} UTC \u2014 skipped")
+            lines.append(f"\u23ed\ufe0f  SKIP   {ss}\u2013{se} UTC")
         else:
-            icon = "\u2705" if s.get("is_win") == 1 else ("\u274c" if s.get("is_win") == 0 else "\u23f3")
-            lines.append(f"{icon} {ss}-{se} UTC  {s['side']}  ${s.get('entry_price', 0):.2f}")
+            if s.get("is_win") == 1:
+                icon = "\u2705"
+                result = "WIN"
+            elif s.get("is_win") == 0:
+                icon = "\u274c"
+                result = "LOSS"
+            else:
+                icon = "\u23f3"
+                result = "PENDING"
+            side = s.get("side") or "?"
+            price_str = f"${s.get('entry_price', 0):.2f}"
+            lines.append(
+                f"{icon}  {side:>4}  {price_str}  {ss}\u2013{se}  [{result}]"
+            )
     return "\n".join(lines)
 
 
 def format_recent_trades(trades: list[dict[str, Any]]) -> str:
+    """Suggestion 3: cleaner mini-card format for trades."""
     if not trades:
         return "\nNo trades recorded yet."
     lines = ["\n\U0001f4cb <b>Recent Trades:</b>"]
     for t in trades:
         ss = t["slot_start"].split(" ")[-1] if " " in t["slot_start"] else t["slot_start"]
         se = t["slot_end"].split(" ")[-1] if " " in t["slot_end"] else t["slot_end"]
-        icon = "\u2705" if t.get("is_win") == 1 else ("\u274c" if t.get("is_win") == 0 else "\u23f3")
-        demo_tag = "[DEMO] " if t.get("is_demo") else ""
+        if t.get("is_win") == 1:
+            icon = "\u2705"
+            result = "WIN"
+        elif t.get("is_win") == 0:
+            icon = "\u274c"
+            result = "LOSS"
+        else:
+            icon = "\u23f3"
+            result = "PENDING"
+        demo_tag = "[D] " if t.get("is_demo") else ""
+        side = t.get("side") or "?"
+        amt_str = f"${t.get('amount_usdc', 0):.2f}"
         pnl_str = ""
         if t.get("pnl") is not None:
             sign = "+" if t["pnl"] >= 0 else ""
             pnl_str = f"  {sign}${t['pnl']:.2f}"
-        lines.append(f"{icon} {demo_tag}{ss}-{se} UTC  {t['side']}  ${t['amount_usdc']:.2f}{pnl_str}")
+        lines.append(
+            f"{icon}  {demo_tag}{side:>4}  {amt_str}  {ss}\u2013{se}{pnl_str}  [{result}]"
+        )
     return "\n".join(lines)
 
 

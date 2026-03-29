@@ -37,6 +37,7 @@ DB_PATH: str = os.getenv("DB_PATH", "autopoly.db")
 # ---------------------------------------------------------------------------
 DEFAULT_DEMO_BANKROLL: float = 100.0
 DEFAULT_SIZING_MODE: str = "fixed"
+KELLY_MIN_SAMPLES: int = 5
 
 # ---------------------------------------------------------------------------
 # Strategy

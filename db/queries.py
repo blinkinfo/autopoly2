@@ -76,7 +76,9 @@ async def get_sizing_mode() -> str:
 async def get_win_rate_for_kelly() -> float:
     """Return historical signal win rate (non-skipped, resolved signals).
 
-    Returns 0.0 if fewer than 10 resolved signals exist (not enough data).
+    Returns -1.0 (sentinel) if fewer than ``cfg.KELLY_MIN_SAMPLES`` resolved
+    signals exist -- indicating insufficient data for Kelly sizing.
+    Returns 0.0 when the true win rate is 0% (enough samples, all losses).
     """
     async with aiosqlite.connect(_db()) as db:
         db.row_factory = aiosqlite.Row
@@ -88,8 +90,8 @@ async def get_win_rate_for_kelly() -> float:
         row = await cursor.fetchone()
         total = row["total"]
         wins = row["wins"] or 0
-    if total < 10:
-        return 0.0
+    if total < cfg.KELLY_MIN_SAMPLES:
+        return -1.0
     return wins / total
 
 

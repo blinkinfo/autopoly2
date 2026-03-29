@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 
+import config as cfg
 from db import queries
 
 log = logging.getLogger(__name__)
@@ -61,8 +62,12 @@ async def get_trade_size(
 
     if mode == "half-kelly":
         win_rate = await queries.get_win_rate_for_kelly()
-        if win_rate <= 0:
-            log.info("Half-Kelly: insufficient data (win_rate=%.2f), falling back to fixed", win_rate)
+        if win_rate < 0:
+            log.info(
+                "Half-Kelly: insufficient data (fewer than %d resolved signals), "
+                "falling back to fixed",
+                cfg.KELLY_MIN_SAMPLES,
+            )
             return await queries.get_trade_amount()
 
         demo = await queries.is_demo_mode()

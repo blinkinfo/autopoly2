@@ -82,6 +82,36 @@ def format_resolution(
     return "\n".join(lines)
 
 
+def format_redemption_notification(
+    redemptions: list[dict],
+    total_usdc: float,
+) -> str:
+    """Format a Telegram notification for redeemed positions."""
+    count = len(redemptions)
+    lines = [
+        f"\U0001f4b0 <b>Redeemed {count} position(s) for +${total_usdc:.2f} USDC</b>",
+        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    ]
+    for r in redemptions:
+        title = r.get("market_title") or (r.get("condition_id", "Unknown")[:16])
+        amount = r.get("amount_usdc", 0)
+        outcome = r.get("outcome", "")
+        status_icon = "\u2705" if r.get("status") == "redeemed" else "\u274c"
+        lines.append(f"\u2502 {status_icon} {title} ({outcome}) \u2014 ${amount:.2f}")
+    lines.append("\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+    return "\n".join(lines)
+
+
+def format_redemption_error(error_msg: str) -> str:
+    """Format a Telegram notification for a redemption failure."""
+    return (
+        "\u274c <b>Auto-Redeem Error</b>\n"
+        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"\u2502 {error_msg}\n"
+        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dashboards (requested via bot commands)
 # ---------------------------------------------------------------------------

@@ -395,3 +395,90 @@ async def get_trade_stats(limit: int | None = None, demo: bool = False) -> dict[
         "roi_pct": round(roi_pct, 1),
         **streaks,
     }
+
+
+# ---------------------------------------------------------------------------
+# Redemption CRUD
+# ---------------------------------------------------------------------------
+
+async def is_auto_redeem_enabled() -> bool:
+    val = await get_setting("auto_redeem_enabled")
+    return val == "true"
+
+
+async def insert_redemption(
+    condition_id: str,
+    amount_usdc: float,
+    market_slug: str | None = None,
+    market_title: str | None = None,
+    outcome: str | None = None,
+    tx_hash: str | None = None,
+    status: str = "pending",
+) -> int:
+    async with aiosqlite.connect(_db()) as db:
+        cursor = await db.execute(
+            "INSERT INTO redemptions (condition_id, amount_usdc, market_slug, "
+            "market_title, outcome, tx_hash, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (condition_id, amount_usdc, market_slug, market_title, outcome, tx_hash, status),
+        )
+        await db.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+
+async def update_redemption_status(
+    redemption_id: int, status: str, tx_hash: str | None = None, error_message: str | None = None
+) -> None:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(_db()) as db:
+        if status == "redeemed":
+            await db.execute(
+                "UPDATE redemptions SET status = ?, tx_hash = COALESCE(?, tx_hash), "
+                "redeemed_at = ?, error_message = NULL WHERE id = ?",
+                (status, tx_hash, now, redemption_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE redemptions SET status = ?, error_message = ? WHERE id = ?",
+                (status, error_message, redemption_id),
+            )
+        await db.commit()
+
+
+async def get_redeemed_condition_ids() -> set[str]:
+    async with aiosqlite.connect(_db()) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT DISTINCT condition_id FROM redemptions WHERE status IN ('redeemed', 'pending')"
+        )
+        rows = await cursor.fetchall()
+        return {row["condition_id"] for row in rows}
+
+
+async def get_recent_redemptions(n: int = 10) -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_db()) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM redemptions ORDER BY id DESC LIMIT ?", (n,)
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_redemption_stats() -> dict[str, Any]:
+    async with aiosqlite.connect(_db()) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN status = 'redeemed' THEN 1 ELSE 0 END) as success_count, "
+            "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count, "
+            "SUM(CASE WHEN status = 'redeemed' THEN amount_usdc ELSE 0 END) as total_redeemed_usdc "
+            "FROM redemptions"
+        )
+        row = await cursor.fetchone()
+        return {
+            "total": row["total"] or 0,
+            "success_count": row["success_count"] or 0,
+            "failed_count": row["failed_count"] or 0,
+            "total_redeemed_usdc": round(row["total_redeemed_usdc"] or 0, 2),
+        }

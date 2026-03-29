@@ -32,6 +32,7 @@ The key insight: the N+1 market opens for trading while slot N is still active. 
 - Recovery of unresolved signals on restart
 - Single-chat authentication
 - One-click Railway deployment
+- Auto-redemption of winning positions (gasless via Polymarket relayer)
 
 ## Environment Variables
 
@@ -89,7 +90,7 @@ python main.py
 | `/status` | Bot status, balance, connection info |
 | `/signals` | Signal performance dashboard |
 | `/trades` | Trade P&L dashboard |
-| `/settings` | Toggle autotrade, set trade amount |
+| `/settings` | Toggle autotrade, set trade amount, toggle auto-redeem |
 | `/help` | Command reference |
 
 ## Project Structure
@@ -106,6 +107,7 @@ autopoly/
 |   |-- trader.py     # FOK order execution
 |   |-- resolver.py   # Outcome polling
 |   |-- scheduler.py  # APScheduler 5-min loop
+|   |-- redeemer.py   # Auto-redemption of winning positions
 |-- polymarket/       # Polymarket API layer
 |   |-- client.py     # ClobClient with L2 creds
 |   |-- markets.py    # Slot boundaries & Gamma API
@@ -125,6 +127,7 @@ autopoly/
 - APScheduler and Telegram bot share the same async event loop
 - FOK order amounts rounded to 2 decimal places (py-clob-client issue #121)
 - All timestamps stored and displayed in UTC
+- `poly-web3>=1.0.0` used for gasless redemption via Polymarket relayer (Safe proxy transactions)
 
 ## License
 

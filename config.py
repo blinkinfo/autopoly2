@@ -43,3 +43,13 @@ DEFAULT_SIZING_MODE: str = "fixed"
 # ---------------------------------------------------------------------------
 SIGNAL_THRESHOLD: float = 0.53
 SIGNAL_LEAD_TIME: int = 85  # seconds before slot end to check signal
+
+# ---------------------------------------------------------------------------
+# Redemption
+# ---------------------------------------------------------------------------
+DATA_API_HOST: str = "https://data-api.polymarket.com"
+CTF_ADDRESS: str = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+NEG_RISK_ADAPTER_ADDRESS: str = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+USDC_ADDRESS: str = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+WRAPPED_COLLATERAL_ADDRESS: str = "0x3A3BD7bb9528E159577F7C2e685CC81A765002E2"
+RELAYER_URL: str = "https://relayer-v2.polymarket.com"

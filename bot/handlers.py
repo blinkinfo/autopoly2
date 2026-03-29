@@ -22,6 +22,7 @@ from bot.formatters import (
     format_help,
     format_recent_signals,
     format_recent_trades,
+    format_redemption_notification,
     format_signal_stats,
     format_status,
     format_trade_stats,
@@ -222,8 +223,9 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     sizing_mode = await queries.get_sizing_mode()
     demo_on = await queries.is_demo_mode()
     demo_balance = await queries.get_demo_balance()
+    auto_redeem = await queries.is_auto_redeem_enabled()
     text = "\u2699\ufe0f <b>Settings</b>\n\nTap a button to change:"
-    kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, demo_balance)
+    kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
     if update.callback_query:
         await update.callback_query.answer()
         await _safe_edit(update.callback_query, text, reply_markup=kb)
@@ -321,6 +323,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await queries.set_setting("demo_mode", "false" if current else "true")
         await cmd_settings(update, context)
 
+    elif data == "toggle_auto_redeem":
+        current = await queries.is_auto_redeem_enabled()
+        await queries.set_setting("auto_redeem_enabled", "false" if current else "true")
+        await cmd_settings(update, context)
+
     elif data == "change_amount":
         await query.answer()
         await _safe_edit(
@@ -381,7 +388,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         sizing_mode = await queries.get_sizing_mode()
         demo_on = await queries.is_demo_mode()
         demo_balance = await queries.get_demo_balance()
-        kb = settings_keyboard(autotrade, amount, sizing_mode, demo_on, demo_balance)
+        auto_redeem = await queries.is_auto_redeem_enabled()
+        kb = settings_keyboard(autotrade, amount, sizing_mode, demo_on, demo_balance, auto_redeem_on=auto_redeem)
         await update.message.reply_text(
             "\u2699\ufe0f <b>Settings</b>",
             reply_markup=kb,
@@ -415,7 +423,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         trade_amount = await queries.get_trade_amount()
         sizing_mode = await queries.get_sizing_mode()
         demo_on = await queries.is_demo_mode()
-        kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, amount)
+        auto_redeem = await queries.is_auto_redeem_enabled()
+        kb = settings_keyboard(autotrade, trade_amount, sizing_mode, demo_on, amount, auto_redeem_on=auto_redeem)
         await update.message.reply_text(
             "\u2699\ufe0f <b>Settings</b>",
             reply_markup=kb,

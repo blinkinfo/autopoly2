@@ -43,6 +43,23 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS redemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    condition_id TEXT NOT NULL,
+    market_slug TEXT,
+    market_title TEXT,
+    outcome TEXT,
+    amount_usdc REAL NOT NULL,
+    tx_hash TEXT,
+    status TEXT DEFAULT 'pending',
+    error_message TEXT,
+    redeemed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_redemptions_condition ON redemptions(condition_id);
+CREATE INDEX IF NOT EXISTS idx_redemptions_status ON redemptions(status);
 """
 
 DEFAULT_SETTINGS = {
@@ -52,6 +69,7 @@ DEFAULT_SETTINGS = {
     "demo_mode": "true",
     "demo_bankroll": "100",
     "demo_balance": "100",
+    "auto_redeem_enabled": "true",
 }
 
 

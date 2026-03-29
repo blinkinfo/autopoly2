@@ -13,6 +13,7 @@ import config as cfg
 from core import strategy, trader, resolver
 from core import pending_queue
 from core import sizing
+from core.redeemer import redeem_winning_positions
 from db import queries
 from polymarket import account as pm_account
 from polymarket.markets import SLOT_DURATION, slot_info_from_ts
@@ -200,6 +201,35 @@ async def _reconcile_pending() -> None:
             "Reconciler: resolved signal %d — winner=%s is_win=%s",
             signal_id, winner, is_win,
         )
+
+
+async def _auto_redeem() -> None:
+    """Fetch and redeem all redeemable positions; notify Telegram on success.
+
+    Called every 5 minutes by the scheduler. Never raises — all exceptions
+    are caught and logged so the scheduler is never destabilised.
+    """
+    try:
+        from bot.formatters import format_redemption_notification
+
+        if not await queries.is_auto_redeem_enabled():
+            log.debug("Auto-redeem disabled — skipping")
+            return
+
+        if _poly_client is None:
+            log.debug("No poly_client — skipping auto-redeem")
+            return
+
+        results = await redeem_winning_positions(_poly_client)
+
+        if results:
+            total_usdc = sum(r.get("amount_usdc", 0) for r in results if r.get("status") == "redeemed")
+            msg = format_redemption_notification(results, total_usdc)
+            await _send_telegram(msg)
+            log.info("Auto-redeem: %d position(s) processed, total=%.4f USDC", len(results), total_usdc)
+
+    except Exception:
+        log.exception("Auto-redeem job failed unexpectedly")
 
 
 async def _check_and_trade() -> None:
@@ -449,6 +479,16 @@ def start_scheduler(tg_app, poly_client) -> AsyncIOScheduler:
         replace_existing=True,
     )
     log.info("Reconciler job scheduled (every 5 minutes).")
+
+    # Auto-redeem: check and redeem winning positions every 5 minutes
+    SCHEDULER.add_job(
+        _auto_redeem,
+        trigger="interval",
+        minutes=5,
+        id="auto_redeem",
+        replace_existing=True,
+    )
+    log.info("Auto-redeem job scheduled (every 5 minutes).")
 
     # Schedule first check
     _schedule_next()

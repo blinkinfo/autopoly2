@@ -36,6 +36,7 @@ def settings_keyboard(
     sizing_mode: str = "fixed",
     demo_on: bool = True,
     demo_balance: float = 100.0,
+    auto_redeem_on: bool = True,
 ) -> InlineKeyboardMarkup:
     at_label = "\U0001f916 AutoTrade: ON" if autotrade_on else "\U0001f916 AutoTrade: OFF"
     sizing_label = "Fixed" if sizing_mode == "fixed" else "Half-Kelly"
@@ -47,6 +48,10 @@ def settings_keyboard(
         [InlineKeyboardButton(demo_label, callback_data="toggle_demo")],
         [InlineKeyboardButton(f"\U0001f4b0 Demo Balance: ${demo_balance:.2f}", callback_data="change_demo_bankroll")],
         [InlineKeyboardButton("\U0001f504 Reset Demo", callback_data="reset_demo")],
+        [InlineKeyboardButton(
+            "\U0001f4b0 Auto Redeem: ON" if auto_redeem_on else "\U0001f4b0 Auto Redeem: OFF",
+            callback_data="toggle_auto_redeem",
+        )],
         [InlineKeyboardButton("\U0001f519 Back to Menu", callback_data="cmd_menu")],
     ])
 

@@ -280,42 +280,23 @@ async def _check_and_trade() -> None:
     )
     await _send_telegram(msg)
 
-    # 5. Place trade if autotrade on
+    # 5. Place trade
     trade_id: int | None = None
     amount_usdc: float | None = None
     is_demo_trade = False
 
-    if autotrade:
+    if demo_mode:
+        # Demo mode: simulate trade without a real order
+        is_demo_trade = True
         amount_usdc = round(trade_amount, 2)
-
-        if demo_mode:
-            # Demo mode: simulate the trade without placing a real order
-            is_demo_trade = True
-            # Deduct from demo balance upfront
-            demo_bal = await queries.get_demo_balance()
-            if amount_usdc > demo_bal:
-                amount_usdc = round(demo_bal, 2)
-            if amount_usdc <= 0:
-                await _send_telegram(
-                    "\u26a0\ufe0f [DEMO] Insufficient demo balance — trade skipped."
-                )
-            else:
-                trade_id = await queries.insert_trade(
-                    signal_id=signal_id,
-                    slot_start=slot_start_full,
-                    slot_end=slot_end_full,
-                    side=side,
-                    entry_price=entry_price,
-                    amount_usdc=amount_usdc,
-                    fill_price=entry_price,  # simulated fill at entry
-                    status="filled",
-                    demo=True,
-                )
-                await _send_telegram(
-                    f"\U0001f4dd [DEMO] Trade filled: {side} ${amount_usdc:.2f} @ ${entry_price:.2f}"
-                )
-        elif _poly_client is not None and token_id:
-            # Real mode: place FOK order on Polymarket
+        demo_bal = await queries.get_demo_balance()
+        if amount_usdc > demo_bal:
+            amount_usdc = round(demo_bal, 2)
+        if amount_usdc <= 0:
+            await _send_telegram(
+                "\u26a0\ufe0f [DEMO] Insufficient demo balance — trade skipped."
+            )
+        else:
             trade_id = await queries.insert_trade(
                 signal_id=signal_id,
                 slot_start=slot_start_full,
@@ -323,21 +304,39 @@ async def _check_and_trade() -> None:
                 side=side,
                 entry_price=entry_price,
                 amount_usdc=amount_usdc,
-                status="pending",
-                demo=False,
+                fill_price=entry_price,
+                status="filled",
+                demo=True,
             )
-            try:
-                response = await trader.place_fok_order(_poly_client, token_id, amount_usdc)
-                order_id = None
-                if isinstance(response, dict):
-                    order_id = response.get("orderID") or response.get("order_id")
-                await queries.update_trade_status(trade_id, "filled", order_id=order_id)
-                log.info("Trade filled: order_id=%s", order_id)
-            except Exception:
-                log.exception("FOK order failed")
-                await queries.update_trade_status(trade_id, "failed")
-                await _send_telegram(f"\u274c Trade FAILED for {side} slot {slot_start_str}-{slot_end_str} UTC")
-                trade_id = None  # don't resolve a failed trade
+            await _send_telegram(
+                f"\U0001f4dd [DEMO] Trade placed: {side} ${amount_usdc:.2f} @ ${entry_price:.4f}"
+            )
+
+    elif autotrade and _poly_client is not None and token_id:
+        # Real mode: place FOK order on Polymarket
+        amount_usdc = round(trade_amount, 2)
+        trade_id = await queries.insert_trade(
+            signal_id=signal_id,
+            slot_start=slot_start_full,
+            slot_end=slot_end_full,
+            side=side,
+            entry_price=entry_price,
+            amount_usdc=amount_usdc,
+            status="pending",
+            demo=False,
+        )
+        try:
+            response = await trader.place_fok_order(_poly_client, token_id, amount_usdc)
+            order_id = None
+            if isinstance(response, dict):
+                order_id = response.get("orderID") or response.get("order_id")
+            await queries.update_trade_status(trade_id, "filled", order_id=order_id)
+            log.info("Trade filled: order_id=%s", order_id)
+        except Exception:
+            log.exception("FOK order failed")
+            await queries.update_trade_status(trade_id, "failed")
+            await _send_telegram(f"\u274c Trade FAILED for {side} slot {slot_start_str}-{slot_end_str} UTC")
+            trade_id = None
 
     # 6. Schedule resolution after slot N+1 ends
     resolve_time = datetime.fromtimestamp(slot_ts + SLOT_DURATION + 15, tz=timezone.utc)
